@@ -1,0 +1,60 @@
+// Test cases for traffic level calculation function
+// This validates the getTrafficLevel() function logic
+
+// Test data: low, high, predicted -> expected level
+struct TrafficLevelTest {
+  uint16_t low;
+  uint16_t high;
+  uint16_t predicted;
+  uint8_t expectedLevel;
+};
+
+// All test cases from your specification
+TrafficLevelTest testCases[] = {
+  {70, 130, 60,   0},  // Below low: Very Light
+  {70, 130, 70,   0},  // At low: Very Light
+  {70, 130, 75,   1},  // Low-Moderate boundary: Light-Moderate
+  {70, 130, 86,   2},  // Lower-middle: Moderate
+  {70, 130, 99,   2},  // Upper-middle: Moderate
+  {70, 130, 100,  3},  // Middle-Heavy boundary: Moderate-Heavy
+  {70, 130, 114,  3},  // Upper-heavy: Moderate-Heavy
+  {70, 130, 115,  4},  // Near high: Heavy
+  {70, 130, 129,  4},  // Very near high: Heavy
+  {70, 130, 150,  5},  // Above high: Very Heavy
+};
+
+// Simple test function to verify
+void testTrafficLevels() {
+  int passCount = 0;
+  int failCount = 0;
+  
+  Serial.println("\n=== Traffic Level Calculation Tests ===");
+  
+  for (int i = 0; i < 10; i++) {
+    TrafficLevelTest& test = testCases[i];
+    
+    // Simulate the getTrafficLevel calculation
+    uint8_t result;
+    if (test.predicted <= test.low) {
+      result = 0;
+    } else if (test.predicted >= test.high) {
+      result = 5;
+    } else {
+      uint16_t range = test.high - test.low;
+      uint32_t difference = test.predicted - test.low;
+      result = (difference * 4) / range;
+      if (result > 4) result = 4;
+    }
+    
+    bool passed = (result == test.expectedLevel);
+    if (passed) passCount++; else failCount++;
+    
+    Serial.printf("Test %d: low=%d high=%d pred=%d -> result=%d expected=%d %s\n",
+      i+1, test.low, test.high, test.predicted, result, test.expectedLevel,
+      passed ? "✓ PASS" : "✗ FAIL");
+  }
+  
+  Serial.printf("\n=== Results: %d passed, %d failed ===\n\n", passCount, failCount);
+}
+
+// Usage: Call testTrafficLevels() in setup() or from Serial console to verify

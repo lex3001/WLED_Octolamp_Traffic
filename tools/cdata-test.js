@@ -113,7 +113,7 @@ describe('Script', () => {
   }
 
   async function runAndCheckIfBuiltFilesExist() {
-    await execPromise('node tools/cdata.js');
+    await execPromise('node tools/cdata.js', { env: { ...process.env, NODE_ENV: '' } });
     await checkIfBuiltFilesExist();
   }
 
@@ -124,7 +124,7 @@ describe('Script', () => {
 
   async function testFileModification(sourceFilePath, resultFile) {
     // run cdata.js to ensure html_*.h files are created
-    await execPromise('node tools/cdata.js');
+    await execPromise('node tools/cdata.js', { env: { ...process.env, NODE_ENV: '' } });
 
     // modify file
     fs.appendFileSync(sourceFilePath, ' ');
@@ -132,7 +132,7 @@ describe('Script', () => {
     await new Promise(resolve => setTimeout(resolve, 1000));
 
     // run script cdata.js again and wait for it to finish
-    await execPromise('node tools/cdata.js');
+    await execPromise('node tools/cdata.js', { env: { ...process.env, NODE_ENV: '' } });
 
     await checkIfFileWasNewlyCreated(path.join(folderPath, resultFile));
   }
@@ -145,7 +145,7 @@ describe('Script', () => {
 
     it('only one html_*.h file is missing', async () => {
       // run script cdata.js and wait for it to finish
-      await execPromise('node tools/cdata.js');
+      await execPromise('node tools/cdata.js', { env: { ...process.env, NODE_ENV: '' } });
 
       // delete a random html_*.h file
       let files = await fs.promises.readdir(folderPath);
@@ -157,12 +157,12 @@ describe('Script', () => {
     });
 
     it('script was executed with -f or --force', async () => {
-      await execPromise('node tools/cdata.js');
+      await execPromise('node tools/cdata.js', { env: { ...process.env, NODE_ENV: '' } });
       await new Promise(resolve => setTimeout(resolve, 1000));
-      await execPromise('node tools/cdata.js --force');
+      await execPromise('node tools/cdata.js --force', { env: { ...process.env, NODE_ENV: '' } });
       await checkIfFileWasNewlyCreated(path.join(folderPath, 'html_ui.h'));
       await new Promise(resolve => setTimeout(resolve, 1000));
-      await execPromise('node tools/cdata.js -f');
+      await execPromise('node tools/cdata.js -f', { env: { ...process.env, NODE_ENV: '' } });
       await checkIfFileWasNewlyCreated(path.join(folderPath, 'html_ui.h'));
     });
 
@@ -197,12 +197,12 @@ describe('Script', () => {
 
       // run script cdata.js and wait for it to finish
       let startTime = Date.now();
-      await execPromise('node tools/cdata.js');
+      await execPromise('node tools/cdata.js', { env: { ...process.env, NODE_ENV: '' } });
       const firstRunTime = Date.now() - startTime;
 
       // run script cdata.js and wait for it to finish
       startTime = Date.now();
-      await execPromise('node tools/cdata.js');
+      await execPromise('node tools/cdata.js', { env: { ...process.env, NODE_ENV: '' } });
       const secondRunTime = Date.now() - startTime;
 
       // check if second run was faster than the first (must be at least 2x faster)

@@ -1,0 +1,23 @@
+{
+  "name": "traffic_lamp",
+  "version": "1.0.0",
+  "description": "Traffic lamp usermod with TomTom API integration for real-time traffic visualization",
+  "authors": [
+    {
+      "name": "WLED Contributors"
+    }
+  ],
+  "dependencies": {
+    "ArduinoJson": "^6.21.0"
+  },
+  "frameworks": "arduino",
+  "platforms": "espressif32",
+  "export": {
+    "include": [
+      "*"
+    ]
+  },
+  "build": {
+    "libArchive": false
+  }
+}
