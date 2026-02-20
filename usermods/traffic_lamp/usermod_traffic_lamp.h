@@ -45,13 +45,154 @@ private:
   unsigned long lastTrafficCheck = 0;
   unsigned long segmentSetupTime = 0;
   const unsigned long checkInterval = 300000; // 5 minutes
+  const uint32_t minFreeHeapForQuery = 45000; // conservative TLS safety margin for ESP32
+  const uint8_t dnsRetryCount = 3;
+  const uint16_t dnsRetryDelayMs = 250;
+  const char* tomTomHost = "api.tomtom.com";
   bool wifiConnected = false;
   bool segmentsCreated = false;
+  bool hasCachedTomTomIp = false;
+  IPAddress cachedTomTomIp;
 
   #ifndef TOMTOM_API_KEY
     #define TOMTOM_API_KEY "YOUR_API_KEY"
   #endif
   String apiKey = TOMTOM_API_KEY;
+
+  uint32_t getMaxAllocBlock() {
+    #ifdef ESP32
+      return ESP.getMaxAllocHeap();
+    #else
+      return ESP.getFreeHeap();
+    #endif
+  }
+
+  void logWiFiState(const char* tag) {
+    Serial.printf("[TrafficLamp] %s WiFi.status=%d, connected=%d, RSSI=%d, IP=%s\n",
+      tag,
+      WiFi.status(),
+      WLED_CONNECTED ? 1 : 0,
+      WiFi.RSSI(),
+      WiFi.localIP().toString().c_str());
+
+    Serial.printf("[TrafficLamp] DNS servers: %s, %s\n",
+      WiFi.dnsIP(0).toString().c_str(),
+      WiFi.dnsIP(1).toString().c_str());
+  }
+
+  bool resolveTomTomHost(IPAddress& tomtomIp) {
+    for (uint8_t attempt = 1; attempt <= dnsRetryCount; attempt++) {
+      if (WiFi.hostByName(tomTomHost, tomtomIp)) {
+        if (attempt > 1) {
+          Serial.printf("[TrafficLamp] DNS recovered on retry %u\n", attempt);
+        }
+        return true;
+      }
+
+      Serial.printf("[TrafficLamp] DNS resolve attempt %u/%u failed\n", attempt, dnsRetryCount);
+      delay(dnsRetryDelayMs);
+    }
+
+    return false;
+  }
+
+  void cacheTomTomIp(const IPAddress& ip) {
+    cachedTomTomIp = ip;
+    hasCachedTomTomIp = true;
+    Serial.printf("[TrafficLamp] Cached TomTom IP: %s\n", cachedTomTomIp.toString().c_str());
+  }
+
+  bool getTomTomRequestHost(char* outHost, size_t outLen, bool& forceTomTomHostHeader) {
+    IPAddress tomtomIp;
+    forceTomTomHostHeader = false;
+
+    if (resolveTomTomHost(tomtomIp)) {
+      cacheTomTomIp(tomtomIp);
+      snprintf(outHost, outLen, "%s", tomTomHost);
+      return true;
+    }
+
+    Serial.println("[TrafficLamp] DNS failed; attempting WiFi reconnect");
+    WiFi.reconnect();
+    delay(1000);
+
+    if (resolveTomTomHost(tomtomIp)) {
+      cacheTomTomIp(tomtomIp);
+      logWiFiState("DNS recovered after reconnect:");
+      snprintf(outHost, outLen, "%s", tomTomHost);
+      return true;
+    }
+
+    if (hasCachedTomTomIp) {
+      forceTomTomHostHeader = true;
+      String ipString = cachedTomTomIp.toString();
+      snprintf(outHost, outLen, "%s", ipString.c_str());
+      Serial.printf("[TrafficLamp] DNS unavailable; using cached TomTom IP fallback: %s\n", outHost);
+      return true;
+    }
+
+    // Do not hard-fail on DNS precheck: let HTTPClient try normal hostname resolution.
+    // This avoids false negatives from transient hostByName() failures.
+    Serial.println("[TrafficLamp] DNS precheck failed and no cache; proceeding with hostname request");
+    logWiFiState("DNS precheck warning:");
+    snprintf(outHost, outLen, "%s", tomTomHost);
+    return true;
+  }
+
+  bool networkReadyForQuery() {
+    if (!WLED_CONNECTED || WiFi.status() != WL_CONNECTED) {
+      logWiFiState("Network check failed:");
+      return false;
+    }
+
+    uint32_t freeHeap = ESP.getFreeHeap();
+    uint32_t maxAlloc = getMaxAllocBlock();
+    if (freeHeap < minFreeHeapForQuery || maxAlloc < (minFreeHeapForQuery / 2)) {
+      Serial.printf("[TrafficLamp] Heap too low for TLS query. free=%u maxBlock=%u\n", freeHeap, maxAlloc);
+      return false;
+    }
+
+    Serial.printf("[TrafficLamp] Network OK. freeHeap=%u, maxBlock=%u\n", freeHeap, maxAlloc);
+    return true;
+  }
+
+  void getDateTime(char* out, size_t outLen) {
+    char timeBuf[32] = {0};
+    getTimeString(timeBuf);
+    snprintf(out, outLen, "%s", timeBuf);
+  }
+
+  void logLoopTimestamp(const char* phase) {
+    char dt[32] = {0};
+    getDateTime(dt, sizeof(dt));
+    Serial.printf("[TrafficLamp] [%s] %s\n", dt, phase);
+  }
+
+  const char* httpErrorToText(int code) {
+    switch (code) {
+      case -1:  return "CONNECTION_REFUSED";
+      case -2:  return "SEND_HEADER_FAILED";
+      case -3:  return "SEND_PAYLOAD_FAILED";
+      case -4:  return "NOT_CONNECTED";
+      case -5:  return "CONNECTION_LOST";
+      case -6:  return "NO_STREAM";
+      case -7:  return "NO_HTTP_SERVER";
+      case -8:  return "TOO_LESS_RAM";
+      case -9:  return "ENCODING";
+      case -10: return "STREAM_WRITE";
+      case -11: return "READ_TIMEOUT";
+      default:  return "UNKNOWN";
+    }
+  }
+
+  void logTransportFailure(int httpCode, const char* phaseTag) {
+    char dt[32] = {0};
+    getDateTime(dt, sizeof(dt));
+    Serial.printf("[TrafficLamp] [%s] %s transport error: %d (%s)\n",
+      dt, phaseTag, httpCode, httpErrorToText(httpCode));
+    logWiFiState("Transport failure state:");
+    Serial.printf("[TrafficLamp] Heap at failure: free=%u maxBlock=%u\n", ESP.getFreeHeap(), getMaxAllocBlock());
+  }
 
   // Helper function to calculate traffic level (0-5) based on predicted time
   // Takes low threshold, high threshold, and predicted minutes
@@ -98,8 +239,8 @@ private:
     }
   }
 
-  // Query traffic for a specific destination
-  uint16_t queryTraffic(const char* origin, const char* destination) {
+  // Internal: Query traffic using pre-allocated client (avoids repeated TLS heap pressure)
+  uint16_t queryTrafficWithClient(WiFiClientSecure* client, const char* requestHost, bool forceTomTomHostHeader, const char* origin, const char* destination) {
     if (!WLED_CONNECTED) return 0;
 
     if (apiKey == "YOUR_API_KEY") {
@@ -107,58 +248,119 @@ private:
       return 0;
     }
 
-    Serial.printf("[TrafficLamp] Querying: %s -> %s\n", origin, destination);
+    char dt[32] = {0};
+    getDateTime(dt, sizeof(dt));
+    Serial.printf("[TrafficLamp] [%s] Querying: %s -> %s\n", dt, origin, destination);
 
-    String url = "https://api.tomtom.com/routing/1/calculateRoute/";
+    String url = "https://";
+    url.reserve(256);
+    url += requestHost;
+    url += "/routing/1/calculateRoute/";
     url += origin;
     url += ":";
     url += destination;
     url += "/json?key=";
     url += apiKey;
-    url += "&traffic=true&travelMode=car";
+    url += "&traffic=true&travelMode=car&routeRepresentation=summaryOnly";
 
-    HTTPClient http;
-    http.begin(url);
-
-    int httpCode = http.GET();
     uint16_t travelMinutes = 0;
 
-    Serial.printf("[TrafficLamp] HTTP code: %d\n", httpCode);
+    // Scoping block: HTTPClient destructor MUST run before client is reused
+    // (fixes ESP32 Arduino core 2.0.x bug where HTTPClient doesn't fully release connection)
+    {
+      HTTPClient http;
+      http.setTimeout(15000);
+      http.setReuse(false); // close socket after request; avoids stale keep-alive states
+      http.begin(*client, url);
+      if (forceTomTomHostHeader) {
+        http.addHeader("Host", tomTomHost);
+      }
 
-    if (httpCode == 200) {
-      String payload = http.getString();
-      Serial.printf("[TrafficLamp] Response size: %d bytes\n", payload.length());
-      
-      // Use a filter to only parse the fields we need, saving memory
-      StaticJsonDocument<200> filter;
-      filter["routes"][0]["summary"]["travelTimeInSeconds"] = true;
-      
-      DynamicJsonDocument doc(2048);  // Much smaller since we're filtering
-      DeserializationError error = deserializeJson(doc, payload, DeserializationOption::Filter(filter));
+      int httpCode = http.GET();
 
-      if (!error && doc["routes"].size() > 0) {
-        JsonObject summary = doc["routes"][0]["summary"];
-        if (!summary.isNull()) {
-          long travelSeconds = summary["travelTimeInSeconds"] | 0;
-          travelMinutes = travelSeconds / 60;
-          Serial.printf("[TrafficLamp] Travel time: %d min (%ld sec)\n", travelMinutes, travelSeconds);
-        } else {
-          Serial.println("[TrafficLamp] ERROR: No summary in response");
+      // One-shot transport retry: recover from stale socket / transient net stack issues
+      if (httpCode < 0) {
+        logTransportFailure(httpCode, "First attempt");
+        Serial.println("[TrafficLamp] Reconnecting WiFi and retrying once...");
+        http.end();
+        WiFi.reconnect();
+        delay(1000);
+
+        http.begin(*client, url);
+        if (forceTomTomHostHeader) {
+          http.addHeader("Host", tomTomHost);
         }
-      } else {
-        if (error) {
-          Serial.printf("[TrafficLamp] JSON error: %s\n", error.c_str());
-        } else {
-          Serial.println("[TrafficLamp] ERROR: No routes in response");
+        httpCode = http.GET();
+        if (httpCode < 0) {
+          logTransportFailure(httpCode, "Retry attempt");
         }
       }
+
+      Serial.printf("[TrafficLamp] HTTP code: %d\n", httpCode);
+
+      if (httpCode == 200) {
+        WiFiClient* stream = http.getStreamPtr();
+        const char* token = "\"travelTimeInSeconds\":";
+        const int tokenLen = strlen(token);
+        const int chunkSize = 64;
+        char buffer[chunkSize * 2 + 1] = {0};
+        int bufferLen = 0;
+        bool found = false;
+        unsigned long streamStart = millis();
+
+        while (http.connected() && !found) {
+          // 10 second hard timeout to prevent infinite loop
+          if (millis() - streamStart > 10000) {
+            Serial.println("[TrafficLamp] Stream timeout");
+            break;
+          }
+
+          int avail = stream->available();
+          if (avail <= 0) {
+            delay(1);
+            continue;
+          }
+
+          int carry = min(bufferLen, tokenLen);
+          if (carry > 0) {
+            memmove(buffer, buffer + bufferLen - carry, carry);
+          }
+          bufferLen = carry;
+
+          int bytesRead = stream->readBytes(buffer + bufferLen, min(avail, chunkSize));
+          bufferLen += bytesRead;
+          buffer[bufferLen] = '\0';
+
+          char* pos = strstr(buffer, token);
+          if (pos) {
+            char* valueStart = pos + tokenLen;
+            while (*valueStart == ' ') valueStart++;
+            uint32_t travelSeconds = (uint32_t)atoi(valueStart);
+            travelMinutes = (uint16_t)((travelSeconds + 30) / 60);
+            Serial.printf("[TrafficLamp] Travel time: %u min (%u sec)\n", travelMinutes, travelSeconds);
+            found = true;
+          }
+        }
+
+        if (!found) {
+          Serial.println("[TrafficLamp] ERROR: travelTimeInSeconds not found");
+        }
+      } else {
+        Serial.printf("[TrafficLamp] HTTP error: %d\n", httpCode);
+      }
+
       http.end();
-    } else {
-      Serial.printf("[TrafficLamp] HTTP error: %d\n", httpCode);
-      http.end();
-    }
+    } // HTTPClient destructor runs HERE, fully releasing the connection
 
     return travelMinutes;
+  }
+
+  // Public wrapper for backward compatibility - allocates fresh client
+  uint16_t queryTraffic(const char* requestHost, bool forceTomTomHostHeader, const char* origin, const char* destination) {
+    WiFiClientSecure client;
+    client.setInsecure();
+    uint16_t result = queryTrafficWithClient(&client, requestHost, forceTomTomHostHeader, origin, destination);
+    return result;
   }
 
   uint32_t getColorForLevel(uint8_t level) {
@@ -253,9 +455,13 @@ public:
     bool nowConnected = WLED_CONNECTED;
     if (nowConnected && !wifiConnected) {
       // WiFi just connected - set ring to deep blue/violet
+      logLoopTimestamp("WiFi transition: connected");
+      logWiFiState("WiFi connected state:");
       setSegmentColor(SEG_RING, STATUS_WIFI_CONNECTING);
       wifiConnected = true;
     } else if (!nowConnected && wifiConnected) {
+      logLoopTimestamp("WiFi transition: disconnected");
+      logWiFiState("WiFi disconnected state:");
       wifiConnected = false;
     }
 
@@ -269,13 +475,34 @@ public:
     // Check traffic every 5 minutes
     if (now - lastTrafficCheck > checkInterval) {
       lastTrafficCheck = now;
+      logLoopTimestamp("Traffic check loop");
       
       // Show querying state on Arm (pulsing yellow)
       setSegmentPulse(SEG_ARM, STATUS_QUERYING);
 
-      // Query both destinations
-      uint16_t dest1Minutes = queryTraffic(TRAFFIC_START, TRAFFIC_DEST1);
-      uint16_t dest2Minutes = queryTraffic(TRAFFIC_START, TRAFFIC_DEST2);
+      if (!networkReadyForQuery()) {
+        setSegmentColor(SEG_ARM, STATUS_ERROR);
+        return;
+      }
+
+      // Log heap state before traffic queries
+      Serial.printf("[TrafficLamp] Free heap before queries: %u, max block: %u\n", 
+          ESP.getFreeHeap(), getMaxAllocBlock());
+
+      char requestHost[48] = {0};
+      bool forceTomTomHostHeader = false;
+      if (!getTomTomRequestHost(requestHost, sizeof(requestHost), forceTomTomHostHeader)) {
+        setSegmentColor(SEG_ARM, STATUS_ERROR);
+        return;
+      }
+
+      // Query with short-lived clients to guarantee full cleanup per request
+      uint16_t dest1Minutes = queryTraffic(requestHost, forceTomTomHostHeader, TRAFFIC_START, TRAFFIC_DEST1);
+      uint16_t dest2Minutes = queryTraffic(requestHost, forceTomTomHostHeader, TRAFFIC_START, TRAFFIC_DEST2);
+
+      // Log heap state after queries
+      Serial.printf("[TrafficLamp] Free heap after queries: %u, max block: %u\n", 
+          ESP.getFreeHeap(), getMaxAllocBlock());
 
       if (dest1Minutes > 0 && dest2Minutes > 0) {
         // Both queries succeeded
