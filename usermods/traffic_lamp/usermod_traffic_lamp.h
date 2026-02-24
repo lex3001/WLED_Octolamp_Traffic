@@ -28,8 +28,8 @@
 #define STATUS_SUCCESS RGBW32(0,   255, 0,   0)          // Green (query success)
 
 // Startup Effect IDs (standard WLED effect indices)
-#define STARTUP_BODY_EFFECT 0      // Solid
-#define STARTUP_RING_EFFECT 0      // Solid
+#define STARTUP_BODY_EFFECT 2      // Breath/Pulse
+#define STARTUP_RING_EFFECT 2      // Breath/Pulse
 
 // Segment IDs for different lamp parts
 #define SEG_BODY_1 0
@@ -396,44 +396,46 @@ public:
     // Segment 0: Body (LEDs 0-2, length 3)
     Segment& seg0 = strip.getSegment(0);
     seg0.setGeometry(0, 3, 1, 0, 0, 0, 1, 0);
-    seg0.setColor(0, TRAFFIC_COLOR_0);
-    seg0.mode = STARTUP_BODY_EFFECT;
 
     // Segment 1: Ring (LEDs 3-66, length 64)
     Segment& seg1 = strip.getSegment(1);
     seg1.setGeometry(3, 67, 1, 0, 0, 0, 1, 0);
-    seg1.setColor(0, TRAFFIC_COLOR_0);
-    seg1.mode = STARTUP_RING_EFFECT;
 
     // Segment 2: Body (LEDs 67-69, length 3)
     Segment& seg2 = strip.getSegment(2);
     seg2.setGeometry(67, 70, 1, 0, 0, 0, 1, 0);
-    seg2.setColor(0, TRAFFIC_COLOR_0);
-    seg2.mode = STARTUP_BODY_EFFECT;
 
     // Segment 3: Head (LEDs 70-88, length 19)
     Segment& seg3 = strip.getSegment(3);
     seg3.setGeometry(70, 89, 1, 0, 0, 0, 1, 0);
-    seg3.setColor(0, TRAFFIC_COLOR_0);
-    seg3.mode = STARTUP_BODY_EFFECT;
 
     // Segment 4: Body (LEDs 89, length 1)
     Segment& seg4 = strip.getSegment(4);
     seg4.setGeometry(89, 90, 1, 0, 0, 0, 1, 0);
-    seg4.setColor(0, TRAFFIC_COLOR_0);
-    seg4.mode = STARTUP_BODY_EFFECT;
 
     // Segment 5: Arm (LEDs 90-94, length 5)
     Segment& seg5 = strip.getSegment(5);
     seg5.setGeometry(90, 95, 1, 0, 0, 0, 1, 0);
-    seg5.setColor(0, STATUS_SUCCESS);
-    seg5.mode = STARTUP_BODY_EFFECT;
 
     // Segment 6: Body (LEDs 95-97, length 3)
     Segment& seg6 = strip.getSegment(6);
     seg6.setGeometry(95, 98, 1, 0, 0, 0, 1, 0);
-    seg6.setColor(0, TRAFFIC_COLOR_0);
-    seg6.mode = STARTUP_BODY_EFFECT;
+
+    // Determine initial state based on WiFi connection
+    uint32_t startColor = STATUS_QUERYING; // Yellow pulse for connecting
+    uint8_t startMode = STARTUP_BODY_EFFECT;
+
+    if (WLED_CONNECTED) {
+      startColor = STATUS_WIFI_CONNECTING; // Solid Blue for connected
+      startMode = FX_MODE_STATIC;
+    }
+
+    // Apply initial state to all segments
+    for (uint8_t i = 0; i < 7; i++) {
+      Segment& seg = strip.getSegment(i);
+      seg.setColor(0, startColor);
+      seg.mode = (i == SEG_RING && startMode != FX_MODE_STATIC) ? STARTUP_RING_EFFECT : startMode;
+    }
 
     strip.resume(); // Resume strip operations
     segmentsCreated = true;
@@ -442,8 +444,8 @@ public:
   void loop() override {
     unsigned long now = millis();
 
-    // Create segments 2 seconds after boot (after WLED finishes initialization)
-    if (!segmentsCreated && now > 2000) {
+    // Create segments shortly after boot (after WLED finishes basic initialization)
+    if (!segmentsCreated && now > 500) {
       Serial.println("[TrafficLamp] Creating segments...");
       Serial.flush();
       createSegments();
@@ -454,10 +456,12 @@ public:
     // Check if WiFi connected state changed
     bool nowConnected = WLED_CONNECTED;
     if (nowConnected && !wifiConnected) {
-      // WiFi just connected - set ring to deep blue/violet
+      // WiFi just connected - set whole lamp to deep blue/violet
       logLoopTimestamp("WiFi transition: connected");
       logWiFiState("WiFi connected state:");
-      setSegmentColor(SEG_RING, STATUS_WIFI_CONNECTING);
+      for (uint8_t i = 0; i < 7; i++) {
+        setSegmentColor(i, STATUS_WIFI_CONNECTING);
+      }
       wifiConnected = true;
     } else if (!nowConnected && wifiConnected) {
       logLoopTimestamp("WiFi transition: disconnected");
