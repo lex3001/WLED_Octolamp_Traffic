@@ -51,8 +51,13 @@ private:
   const char* tomTomHost = "api.tomtom.com";
   bool wifiConnected = false;
   bool segmentsCreated = false;
+  bool startupAnimationActive = true;
+  bool startupAnimationCompleted = false;
   bool hasCachedTomTomIp = false;
   IPAddress cachedTomTomIp;
+  unsigned long lastStartupFrame = 0;
+  uint8_t startupPhase = 0;
+  const unsigned long startupStepMs = 350;
 
   #ifndef TOMTOM_API_KEY
     #define TOMTOM_API_KEY "YOUR_API_KEY"
@@ -237,6 +242,45 @@ private:
       seg.setColor(0, color);
       seg.mode = 2; // Blink/pulse effect
     }
+  }
+
+  void applyStartupSequenceFrame(uint8_t phase) {
+    const uint32_t dimBlue = RGBW32(0, 0, 16, 0);
+    const uint32_t dimAmber = RGBW32(20, 8, 0, 0);
+    const uint32_t brightYellow = RGBW32(255, 190, 0, 0);
+
+    setSegmentColor(SEG_BODY_1, dimAmber);
+    setSegmentColor(SEG_BODY_2, dimAmber);
+    setSegmentColor(SEG_BODY_3, dimAmber);
+    setSegmentColor(SEG_BODY_4, dimAmber);
+    setSegmentColor(SEG_RING, dimBlue);
+    setSegmentColor(SEG_HEAD, dimBlue);
+    setSegmentColor(SEG_ARM, dimAmber);
+
+    switch (phase % 4) {
+      case 0:
+        setSegmentColor(SEG_RING, brightYellow);
+        break;
+      case 1:
+        setSegmentColor(SEG_HEAD, brightYellow);
+        break;
+      case 2:
+        setSegmentColor(SEG_ARM, brightYellow);
+        break;
+      case 3:
+        setSegmentColor(SEG_BODY_2, brightYellow);
+        setSegmentColor(SEG_BODY_3, brightYellow);
+        break;
+    }
+  }
+
+  void runStartupSequence(unsigned long now) {
+    if (!startupAnimationActive || !segmentsCreated) return;
+    if (lastStartupFrame != 0 && (now - lastStartupFrame) < startupStepMs) return;
+
+    lastStartupFrame = now;
+    applyStartupSequenceFrame(startupPhase);
+    startupPhase = (startupPhase + 1) % 4;
   }
 
   // Internal: Query traffic using pre-allocated client (avoids repeated TLS heap pressure)
@@ -437,13 +481,17 @@ public:
 
     strip.resume(); // Resume strip operations
     segmentsCreated = true;
+    startupAnimationActive = !startupAnimationCompleted;
+    startupPhase = 0;
+    lastStartupFrame = 0;
+    runStartupSequence(millis());
   }
 
   void loop() override {
     unsigned long now = millis();
 
-    // Create segments 2 seconds after boot (after WLED finishes initialization)
-    if (!segmentsCreated && now > 2000) {
+    // Create segments shortly after boot, then keep startup sequence active until WiFi connects
+    if (!segmentsCreated && now > 500) {
       Serial.println("[TrafficLamp] Creating segments...");
       Serial.flush();
       createSegments();
@@ -457,6 +505,12 @@ public:
       // WiFi just connected - set ring to deep blue/violet
       logLoopTimestamp("WiFi transition: connected");
       logWiFiState("WiFi connected state:");
+      startupAnimationActive = false;
+      startupAnimationCompleted = true;
+      setSegmentColor(SEG_BODY_1, STATUS_WIFI_CONNECTING);
+      setSegmentColor(SEG_BODY_2, STATUS_WIFI_CONNECTING);
+      setSegmentColor(SEG_BODY_3, STATUS_WIFI_CONNECTING);
+      setSegmentColor(SEG_BODY_4, STATUS_WIFI_CONNECTING);
       setSegmentColor(SEG_RING, STATUS_WIFI_CONNECTING);
       wifiConnected = true;
     } else if (!nowConnected && wifiConnected) {
@@ -465,7 +519,10 @@ public:
       wifiConnected = false;
     }
 
-    if (!WLED_CONNECTED) return;
+    if (!WLED_CONNECTED) {
+      runStartupSequence(now);
+      return;
+    }
 
     // Initialize timing on first run
     if (lastTrafficCheck == 0) {
