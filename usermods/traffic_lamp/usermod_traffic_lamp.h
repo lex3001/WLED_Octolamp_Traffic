@@ -305,7 +305,7 @@ private:
     url += destination;
     url += "/json?key=";
     url += apiKey;
-    url += "&traffic=true&travelMode=car&routeRepresentation=summaryOnly";
+    url += "&traffic=true&travelMode=car&routeType=eco&avoid=carpools&routeRepresentation=summaryOnly";
 
     uint16_t travelMinutes = 0;
 
