@@ -13,13 +13,14 @@
 // These colors and effects are internal to this usermod
 // Users should customize traffic routing in wled00/my_config.h
 
-// Traffic Level Colors (RGB values) - Green to Red scale
-#define TRAFFIC_COLOR_0 RGBW32(0,   255, 0,   0)  // Very Light    - Green
-#define TRAFFIC_COLOR_1 RGBW32(153, 255, 0,   0)  // Light-Moderate - Lime Green
-#define TRAFFIC_COLOR_2 RGBW32(255, 255, 0,   0)  // Moderate      - Yellow
-#define TRAFFIC_COLOR_3 RGBW32(255, 191, 0,   0)  // Moderate-Heavy - Amber
-#define TRAFFIC_COLOR_4 RGBW32(255, 128, 0,   0)  // Heavy         - Orange
-#define TRAFFIC_COLOR_5 RGBW32(255, 0,   0,   0)  // Very Heavy    - Red
+// Traffic Level Colors (RGB values) - Green to Magenta scale
+#define TRAFFIC_COLOR_0 RGBW32(0,   255, 0,   0)  // All Clear           - Pure Green
+#define TRAFFIC_COLOR_1 RGBW32(255, 255, 0,   0)  // Starting to build   - Yellow
+#define TRAFFIC_COLOR_2 RGBW32(255, 165, 0,   0)  // Noticeable delay    - Orange
+#define TRAFFIC_COLOR_3 RGBW32(255, 69,  0,   0)  // Frustrating traffic - Deep Orange
+#define TRAFFIC_COLOR_4 RGBW32(255, 0,   0,   0)  // Heavy Congestion    - Pure Red
+#define TRAFFIC_COLOR_5 RGBW32(139, 0,   0,   0)  // Severe Delay        - Dark Red
+#define TRAFFIC_COLOR_6 RGBW32(255, 0,   255, 0)  // Total Gridlock      - Magenta
 
 // Status Indicator Colors
 #define STATUS_WIFI_CONNECTING RGBW32(0,   0,   255, 0)  // Deep Blue (WiFi connected)
@@ -199,9 +200,9 @@ private:
     Serial.printf("[TrafficLamp] Heap at failure: free=%u maxBlock=%u\n", ESP.getFreeHeap(), getMaxAllocBlock());
   }
 
-  // Helper function to calculate traffic level (0-5) based on predicted time
+  // Helper function to calculate traffic level (0-6) based on predicted time
   // Takes low threshold, high threshold, and predicted minutes
-  // Returns: 0-4 for levels, 5 for exceeding high threshold
+  // Returns: 0-5 for in-range levels, 6 for exceeding high threshold
   uint8_t getTrafficLevel(uint16_t lowMinutes, uint16_t highMinutes, uint16_t predictedMinutes) {
     // If below low threshold, very light traffic
     if (predictedMinutes <= lowMinutes) {
@@ -210,16 +211,16 @@ private:
     
     // If above high threshold, very heavy traffic
     if (predictedMinutes >= highMinutes) {
-      return 5;
+      return 6;
     }
     
     // Calculate level based on position between low and high
     uint16_t range = highMinutes - lowMinutes;
     uint32_t difference = predictedMinutes - lowMinutes;
-    uint8_t level = (difference * 4) / range;
+    uint8_t level = (difference * 6) / range;
     
-    // Clamp to 0-4
-    if (level > 4) level = 4;
+    // Clamp to 0-5
+    if (level > 5) level = 5;
     
     return level;
   }
@@ -409,12 +410,13 @@ private:
 
   uint32_t getColorForLevel(uint8_t level) {
     switch(level) {
-      case 0: return TRAFFIC_COLOR_0;  // Very Light - Green
-      case 1: return TRAFFIC_COLOR_1;  // Light-Moderate - Lime Green
-      case 2: return TRAFFIC_COLOR_2;  // Moderate - Yellow
-      case 3: return TRAFFIC_COLOR_3;  // Moderate-Heavy - Amber
-      case 4: return TRAFFIC_COLOR_4;  // Heavy - Orange
-      case 5: return TRAFFIC_COLOR_5;  // Very Heavy - Red
+      case 0: return TRAFFIC_COLOR_0;  // All Clear - Pure Green
+      case 1: return TRAFFIC_COLOR_1;  // Starting to build - Yellow
+      case 2: return TRAFFIC_COLOR_2;  // Noticeable delay - Orange
+      case 3: return TRAFFIC_COLOR_3;  // Frustrating traffic - Deep Orange
+      case 4: return TRAFFIC_COLOR_4;  // Heavy Congestion - Pure Red
+      case 5: return TRAFFIC_COLOR_5;  // Severe Delay - Dark Red
+      case 6: return TRAFFIC_COLOR_6;  // Total Gridlock - Magenta
       default: return TRAFFIC_COLOR_0;
     }
   }
