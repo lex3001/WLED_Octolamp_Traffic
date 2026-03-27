@@ -20,6 +20,11 @@
   //WARNING: this will hardcode these as the default even after a factory reset
 #define CLIENT_SSID "Your_SSID"
 #define CLIENT_PASS "Your_Password"
+// Fallback WiFi networks (WLED supports up to 3 SSIDs by default)
+//#define CLIENT_SSID2 "Your_Fallback_SSID"
+//#define CLIENT_PASS2 "Your_Fallback_Password"
+//#define CLIENT_SSID3 "Your_Another_Fallback_SSID"
+//#define CLIENT_PASS3 "Your_Another_Fallback_Password"
 */
 
 //#define MAX_LEDS 1500       // Maximum total LEDs. More than 1500 might create a low memory situation on ESP8266.
